@@ -44,6 +44,13 @@ public class ApiHealthCanary {
 
     public void canaryCode(Synthetics synthetics) throws Exception {
         logger.info("Starting Canary");
+        // TEMPORARY diagnostic marker - same class, same logger instance as the
+        // "Starting Canary" line immediately above, which CloudWatch already proves
+        // executes. If this line is ALSO absent from CloudWatch despite that, the
+        // problem isn't specific to CanaryConfig/CanaryApiSessionClient's loggers -
+        // it's something about output ordering/timing/truncation within this exact
+        // invocation. Remove once the root cause is confirmed and fixed.
+        logger.info("CANARY_BUILD_MARKER=20260925-01");
 
         CanaryConfig config = CanaryConfig.load();
         logger.info("Environment: {} (tenant: {})", config.getBaseUri(), config.getTenant());
@@ -51,6 +58,9 @@ public class ApiHealthCanary {
         ApiSession[] sessionHolder = new ApiSession[1];
 
         synthetics.executeStep("Login", () -> {
+            // TEMPORARY diagnostic marker - same class, same logger instance as
+            // "Starting Login step" below, immediately adjacent to it.
+            logger.info("CANARY_LOGIN_PATH_MARKER=20260925-01");
             logger.info("Starting Login step");
             sessionHolder[0] = CanaryApiSessionClient.login(
                     config.getBaseUri(), config.getTenant(), config.getUsername(), config.getPassword());

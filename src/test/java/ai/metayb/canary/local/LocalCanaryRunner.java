@@ -15,9 +15,9 @@ import java.util.concurrent.ExecutionException;
  * this is not a reimplementation or a mock of the Canary's own logic, only of
  * the Synthetics runtime around it.
  *
- * Needs no AWS credentials UNLESS CANARY_SECRET_ID is set in the environment,
- * in which case Secrets Manager genuinely is being exercised on purpose - see
- * README "Local Canary validation" for both modes.
+ * Needs no AWS credentials UNLESS CANARY_PASSWORD_PARAMETER is set in the
+ * environment, in which case Parameter Store genuinely is being exercised on
+ * purpose - see README "Local Canary validation" for both modes.
  *
  * Usage:
  *   mvn test-compile exec:java -Dexec.mainClass=ai.metayb.canary.local.LocalCanaryRunner -Dexec.classpathScope=test

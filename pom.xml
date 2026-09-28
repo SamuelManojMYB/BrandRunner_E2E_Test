@@ -170,11 +170,13 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- AWS Secrets Manager (Canary credentials) -->
-        <!-- https://mvnrepository.com/artifact/software.amazon.awssdk/secretsmanager -->
+        <!-- AWS Systems Manager Parameter Store (Canary credentials) -->
+        <!-- https://mvnrepository.com/artifact/software.amazon.awssdk/ssm -->
+        <!-- Chosen over Secrets Manager: this Canary needs one static credential with no
+             rotation, so Parameter Store (SecureString) is the simpler, cheaper fit. -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
-            <artifactId>secretsmanager</artifactId>
+            <artifactId>ssm</artifactId>
             <version>2.55.1</version>
         </dependency>
 

@@ -2,6 +2,8 @@ package ai.metayb.canary;
 
 import ai.metayb.config.ConfigManager;
 import ai.metayb.ui.core.DataReader;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.function.Supplier;
 
@@ -16,19 +18,22 @@ import java.util.function.Supplier;
  * API_BASE_URL / API_TENANT env vars  -->  ConfigManager (config.properties)
  *
  * credentials:
- *   CANARY_SECRET_ID set?  -->  AWS Secrets Manager (username optionally
- *                               overridden by CANARY_USERNAME env var)
- *   else                   -->  CANARY_USERNAME / CANARY_PASSWORD env vars
- *   else                   -->  DataReader (credentials.properties) - local
- *                               dev fallback only, exactly what BaseApiTest
- *                               already uses today.
+ *   CANARY_PASSWORD_PARAMETER set?  -->  AWS Systems Manager Parameter Store
+ *                                        (username: CANARY_USERNAME_PARAMETER,
+ *                                        else CANARY_USERNAME env var)
+ *   else                             -->  CANARY_USERNAME / CANARY_PASSWORD env vars
+ *   else                             -->  DataReader (credentials.properties) - local
+ *                                        dev fallback only, exactly what BaseApiTest
+ *                                        already uses today.
  * </pre>
  *
- * This means a real CloudWatch deployment (which sets CANARY_SECRET_ID) never
- * touches the committed credentials.properties at all, while a local run with
- * no environment configured behaves exactly like the existing test suite.
+ * This means a real CloudWatch deployment (which sets CANARY_PASSWORD_PARAMETER)
+ * never touches the committed credentials.properties at all, while a local run
+ * with no environment configured behaves exactly like the existing test suite.
  */
 public final class CanaryConfig {
+
+    private static final Logger logger = LogManager.getLogger(CanaryConfig.class);
 
     private final String baseUri;
     private final String tenant;
@@ -43,6 +48,17 @@ public final class CanaryConfig {
     }
 
     public static CanaryConfig load() {
+        // ONE unmistakable, impossible-to-miss marker printed before ANYTHING else this
+        // class does - including before base URL/tenant resolution. Logged through Log4j2
+        // (not System.out/System.err): comparing prior CloudWatch output against source
+        // proved every line that actually reaches CloudWatch - ApiHealthCanary's "Starting
+        // Canary"/"Environment: ..." and SanitizedApiLoggingFilter's "--> METHOD URL" - is
+        // Logger-based, while raw System.out/System.err diagnostics never appeared across
+        // two prior rounds. The Synthetics Java runtime's CloudWatch log capture is wired
+        // to the Log4j2 appender pipeline, not to raw stdout/stderr. TEMPORARY - remove
+        // once the root cause is confirmed and fixed.
+        logger.info("CANARY_DIAGNOSTIC_VERSION=3");
+
         String baseUri = firstNonBlank(() -> System.getenv("API_BASE_URL"), ConfigManager::getApiBaseUrl);
         String tenant = firstNonBlank(() -> System.getenv("API_TENANT"), ConfigManager::getApiTenant);
         if (baseUri == null || baseUri.isBlank()) {
@@ -56,17 +72,24 @@ public final class CanaryConfig {
         // first non-blank result - critical here, since localUsername()/localPassword()
         // read credentials.properties, which the deployed Canary artifact deliberately
         // does NOT include (see pom.xml's canary-jar exclusions). A real deployment sets
-        // CANARY_SECRET_ID or CANARY_USERNAME/CANARY_PASSWORD, so that fallback supplier
-        // must never actually be invoked there - only its being *unreachable* code for a
-        // properly-configured environment matters, not whether the class it touches
-        // happens to exist on the classpath.
-        String secretId = System.getenv("CANARY_SECRET_ID");
+        // CANARY_PASSWORD_PARAMETER or CANARY_USERNAME/CANARY_PASSWORD, so that fallback
+        // supplier must never actually be invoked there - only its being *unreachable*
+        // code for a properly-configured environment matters, not whether the class it
+        // touches happens to exist on the classpath.
+        // Credential-source diagnostics (which path was used, parameter names, lengths,
+        // whitespace) are logged in CanaryApiSessionClient.login() instead, immediately
+        // before the POST - it independently re-derives the same env vars checked here,
+        // so nothing needs to be threaded through this method's return value for that.
+        String passwordParam = System.getenv("CANARY_PASSWORD_PARAMETER");
+        String usernameParam = System.getenv("CANARY_USERNAME_PARAMETER");
         String username;
         String password;
-        if (secretId != null && !secretId.isBlank()) {
-            SecretsManagerCredentialResolver.Credentials creds = SecretsManagerCredentialResolver.resolve(secretId);
-            username = firstNonBlank(() -> System.getenv("CANARY_USERNAME"), creds::username, CanaryConfig::localUsername);
-            password = firstNonBlank(creds::password, CanaryConfig::localPassword);
+        if (passwordParam != null && !passwordParam.isBlank()) {
+            password = ParameterStoreCredentialResolver.resolve(passwordParam);
+            username = firstNonBlank(
+                    () -> System.getenv("CANARY_USERNAME"),
+                    () -> (usernameParam != null && !usernameParam.isBlank()) ? ParameterStoreCredentialResolver.resolve(usernameParam) : null,
+                    CanaryConfig::localUsername);
         } else {
             username = firstNonBlank(() -> System.getenv("CANARY_USERNAME"), CanaryConfig::localUsername);
             password = firstNonBlank(() -> System.getenv("CANARY_PASSWORD"), CanaryConfig::localPassword);
@@ -74,12 +97,12 @@ public final class CanaryConfig {
 
         if (username == null || username.isBlank()) {
             throw new IllegalStateException(
-                    "No Canary username configured - set CANARY_USERNAME, a 'username' field in the "
-                            + "CANARY_SECRET_ID secret, or apiEmail in credentials.properties for local runs");
+                    "No Canary username configured - set CANARY_USERNAME, CANARY_USERNAME_PARAMETER, "
+                            + "or apiEmail in credentials.properties for local runs");
         }
         if (password == null || password.isBlank()) {
             throw new IllegalStateException(
-                    "No Canary password configured - set CANARY_PASSWORD, CANARY_SECRET_ID, "
+                    "No Canary password configured - set CANARY_PASSWORD, CANARY_PASSWORD_PARAMETER, "
                             + "or apiPassword in credentials.properties for local runs");
         }
 
@@ -123,7 +146,7 @@ public final class CanaryConfig {
         } catch (Throwable t) {
             Throwable root = t.getCause() != null ? t.getCause() : t;
             throw new IllegalStateException(
-                    "No CANARY_USERNAME/CANARY_PASSWORD (or CANARY_SECRET_ID) configured, and no local "
+                    "No CANARY_USERNAME/CANARY_PASSWORD (or CANARY_PASSWORD_PARAMETER) configured, and no local "
                             + "credentials.properties fallback is available in this environment: " + root.getMessage(), t);
         }
     }
@@ -138,4 +161,5 @@ public final class CanaryConfig {
         }
         return null;
     }
+
 }
