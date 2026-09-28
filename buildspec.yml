@@ -1,0 +1,80 @@
+# AWS CodeBuild buildspec: build the API automation Docker image, push it to
+# Amazon ECR, then run the "BrandRunners API Suite" inside a container of that
+# image. See docs/AWS_CODEBUILD.md for full setup instructions.
+#
+# This is the "build + push + run" flow - simplest to get started with, and what
+# every push effectively re-validates end to end. If image builds become a
+# bottleneck (the image build recompiles the whole shared Maven module, UI/mobile
+# included), switch the CodeBuild project running day-to-day test executions over
+# to buildspec-test-only.yml instead, which pulls an already-built ECR image and
+# only runs it - see docs/AWS_CODEBUILD.md's "Two-stage alternative" section for
+# when/how to do that split.
+#
+# Required CodeBuild project environment variables (plain, non-secret):
+#   AWS_ACCOUNT_ID      - target AWS account ID
+#   AWS_DEFAULT_REGION  - e.g. ap-south-1
+#   ECR_REPOSITORY      - e.g. brandrunner-api-automation
+#   API_BASE_URL        - e.g. https://maggie.qas.brandrunners.ai/api
+#   API_TENANT          - e.g. maggie.qas
+#
+# Required CodeBuild project secrets, injected from SSM Parameter Store (see the
+# `env.parameter-store` block below and docs/AWS_CODEBUILD.md section 12):
+#   API_USERNAME, API_PASSWORD
+
+version: 0.2
+
+env:
+  parameter-store:
+    API_USERNAME: "/brandrunner/qa/automation/username"
+    API_PASSWORD: "/brandrunner/qa/automation/password"
+
+phases:
+  install:
+    runtime-versions:
+      docker: 20
+
+  pre_build:
+    commands:
+      - echo "Authenticating to Amazon ECR..."
+      - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - IMAGE_TAG="${CODEBUILD_RESOLVED_SOURCE_VERSION:-manual-$(date +%Y%m%d%H%M%S)}"
+      - echo "Building image tag $IMAGE_TAG"
+
+  build:
+    commands:
+      - echo "Building Docker image..."
+      - docker build -t "$ECR_REPOSITORY:$IMAGE_TAG" .
+      - docker tag "$ECR_REPOSITORY:$IMAGE_TAG" "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+      - docker tag "$ECR_REPOSITORY:$IMAGE_TAG" "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+  post_build:
+    commands:
+      - echo "Pushing image to ECR (immutable tag + latest)..."
+      - docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+      - docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+      - echo "Running API automation suite in a container of the pushed image..."
+      - >
+        CONTAINER_ID=$(docker create
+        -e API_BASE_URL="$API_BASE_URL"
+        -e API_TENANT="$API_TENANT"
+        -e API_USERNAME="$API_USERNAME"
+        -e API_PASSWORD="$API_PASSWORD"
+        "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG");
+        docker start -a "$CONTAINER_ID";
+        TEST_EXIT_CODE=$?;
+        mkdir -p target/surefire-reports;
+        docker cp "$CONTAINER_ID":/app/target/surefire-reports/. target/surefire-reports/ || true;
+        docker rm "$CONTAINER_ID" > /dev/null;
+        exit $TEST_EXIT_CODE
+
+reports:
+  brandrunner-api-suite:
+    files:
+      - "testng-results.xml"
+    base-directory: "target/surefire-reports"
+    file-format: "TESTNGXML"
+
+artifacts:
+  files:
+    - "target/surefire-reports/**/*"

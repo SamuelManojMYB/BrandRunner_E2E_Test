@@ -1,6 +1,6 @@
 package ai.metayb.api.auth_session.auth;
 
-import ai.metayb.ui.core.DataReader;
+import ai.metayb.config.ConfigManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.qameta.allure.Description;
 import io.qameta.allure.Epic;
@@ -38,8 +38,7 @@ public class ForgotPasswordApiTest extends BaseApiTest {
     @Story("Forgot Password")
     @Description("Verified live: HTTP 200, message 'A reset link has been sent to your email'.")
     public void forgotPasswordWithKnownEmailSucceeds() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = forgotPassword(credentials.apiEmail);
+        Response response = forgotPassword(ConfigManager.getApiUsername());
 
         Assert.assertEquals(response.statusCode(), 200);
         Assert.assertEquals(response.jsonPath().getString("message"), "A reset link has been sent to your email");

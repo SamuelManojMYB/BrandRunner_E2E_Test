@@ -2,7 +2,6 @@ package ai.metayb.api.auth_session.auth;
 
 import ai.metayb.api.utils.SanitizedApiLoggingFilter;
 import ai.metayb.config.ConfigManager;
-import ai.metayb.ui.core.DataReader;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.qameta.allure.Allure;
 import io.qameta.allure.Description;
@@ -43,10 +42,10 @@ public class LoginApiTest extends BaseApiTest {
             "(pm.test('Login succeeded')), then confirms the accessToken cookie and " +
             "data.user.businessInfo[0].id that every other authenticated request depends on are present.")
     public void loginReturnsAccessTokenAndBusinessUnit() throws Exception {
-        DataReader credentials = new DataReader();
+        String email = ConfigManager.getApiUsername();
 
-        Allure.step("POST /web/auth/login (email=" + maskEmail(credentials.apiEmail) + ", password=***)");
-        Response response = performLogin(credentials.apiEmail, credentials.apiPassword);
+        Allure.step("POST /web/auth/login (email=" + maskEmail(email) + ", password=***)");
+        Response response = performLogin(email, ConfigManager.getApiPassword());
 
         Allure.step("Response status: " + response.statusCode());
         Assert.assertEquals(response.statusCode(), 200, "Login should return HTTP 200");
@@ -74,8 +73,7 @@ public class LoginApiTest extends BaseApiTest {
             "on every invocation - it never reads BaseApiTest's shared/static authToken or requestSpecification, " +
             "so this cannot accidentally pass via another test's cached session.")
     public void loginWithValidTenantValidUserAndInvalidPassword() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = performLogin(credentials.apiEmail, "WrongPassword@999");
+        Response response = performLogin(ConfigManager.getApiUsername(), "WrongPassword@999");
 
         Assert.assertEquals(response.statusCode(), 400, "Wrong password should return HTTP 400");
         Assert.assertEquals(response.jsonPath().getString("message"), "Login Failed");
@@ -101,8 +99,7 @@ public class LoginApiTest extends BaseApiTest {
     @Story("User Login")
     @Description("Verified live: HTTP 400, message 'Validation Error', errors.password contains 'Password is required'.")
     public void loginWithMissingPasswordFieldIsRejected() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = loginRequest(credentials.apiEmail, null, ConfigManager.getApiTenant());
+        Response response = loginRequest(ConfigManager.getApiUsername(), null, ConfigManager.getApiTenant());
 
         Assert.assertEquals(response.statusCode(), 400);
         Assert.assertEquals(response.jsonPath().getString("message"), "Validation Error");
@@ -113,8 +110,7 @@ public class LoginApiTest extends BaseApiTest {
     @Story("User Login")
     @Description("Verified live: HTTP 400, message 'Validation Error', errors.email contains 'Email is required'.")
     public void loginWithMissingEmailFieldIsRejected() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = loginRequest(null, credentials.apiPassword, ConfigManager.getApiTenant());
+        Response response = loginRequest(null, ConfigManager.getApiPassword(), ConfigManager.getApiTenant());
 
         Assert.assertEquals(response.statusCode(), 400);
         Assert.assertEquals(response.jsonPath().getString("message"), "Validation Error");
@@ -125,8 +121,7 @@ public class LoginApiTest extends BaseApiTest {
     @Story("User Login")
     @Description("Verified live: HTTP 400, message 'Validation Error', errors.email contains 'Email must be a email'.")
     public void loginWithMalformedEmailIsRejected() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = loginRequest("not-an-email", credentials.apiPassword, ConfigManager.getApiTenant());
+        Response response = loginRequest("not-an-email", ConfigManager.getApiPassword(), ConfigManager.getApiTenant());
 
         Assert.assertEquals(response.statusCode(), 400);
         Assert.assertEquals(response.jsonPath().getString("message"), "Validation Error");
@@ -138,8 +133,7 @@ public class LoginApiTest extends BaseApiTest {
     @Description("Verified live: HTTP 400, message explains tenancy is required " +
             "('The invoked function is enabled with tenancy configuration...').")
     public void loginWithMissingTenantHeaderIsRejected() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = loginRequest(credentials.apiEmail, credentials.apiPassword, null);
+        Response response = loginRequest(ConfigManager.getApiUsername(), ConfigManager.getApiPassword(), null);
 
         Assert.assertEquals(response.statusCode(), 400);
         Assert.assertTrue(response.jsonPath().getString("message").contains("tenant"),
@@ -151,8 +145,7 @@ public class LoginApiTest extends BaseApiTest {
     @Description("Verified live: HTTP 400, message 'Database connection failed, Please check the tenant ID' " +
             "- this app resolves tenants to per-tenant database connections.")
     public void loginWithInvalidTenantHeaderIsRejected() throws Exception {
-        DataReader credentials = new DataReader();
-        Response response = loginRequest(credentials.apiEmail, credentials.apiPassword, "nonexistent-tenant-xyz");
+        Response response = loginRequest(ConfigManager.getApiUsername(), ConfigManager.getApiPassword(), "nonexistent-tenant-xyz");
 
         Assert.assertEquals(response.statusCode(), 400);
         Assert.assertEquals(response.jsonPath().getString("message"), "Database connection failed, Please check the tenant ID");

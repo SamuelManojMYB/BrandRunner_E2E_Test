@@ -19,7 +19,22 @@ If you want to learn more about creating good readme files then refer the follow
 - [Visual Studio Code](https://github.com/Microsoft/vscode)
 - [Chakra Core](https://github.com/Microsoft/ChakraCore)
 
-# CloudWatch Synthetics Canary
+# AWS CodeBuild + ECR (API automation)
+
+The primary CI path for running the existing API TestNG suite
+(`src/test/resources/testng/testng-api.xml`) in AWS: a Docker image built from
+this repo, stored in Amazon ECR, executed by AWS CodeBuild. See
+[docs/AWS_CODEBUILD.md](docs/AWS_CODEBUILD.md) for full setup instructions,
+IAM requirements, and troubleshooting. UI/Mobile automation are unaffected -
+this only runs the API suite.
+
+# CloudWatch Synthetics Canary (legacy)
+
+**Status: legacy.** AWS CodeBuild (above) is now the primary path for
+automated/CI execution of the API suite. This Canary implementation is kept
+as-is, not deleted, and not depended on by the CodeBuild setup - it remains
+useful as a standalone periodic health check if you continue running it, but
+new CI-style execution work should go through CodeBuild instead.
 
 A lightweight, six-step API health/smoke journey (`ApiHealthCanary`) that runs
 periodically through AWS CloudWatch Synthetics, reusing this project's existing
@@ -92,36 +107,36 @@ CloudWatch env var  -->  existing local config (config.properties / credentials.
 |---|---|---|---|
 | `API_BASE_URL` | No | No | `config/config.properties`'s `api.base.url` |
 | `API_TENANT` | No | No | `config/config.properties`'s `api.tenant` |
-| `CANARY_USERNAME` | No | No (unless you'd rather keep it secret too - see below) | Secrets Manager secret's `username` field, then `config/credentials.properties`'s `apiEmail` |
-| `CANARY_PASSWORD` | No | **Yes** | Only used if `CANARY_SECRET_ID` is not set |
-| `CANARY_SECRET_ID` | No | No (it's an ARN/name, not a secret itself) | If set, credentials come from Secrets Manager instead of `CANARY_USERNAME`/`CANARY_PASSWORD` |
+| `CANARY_USERNAME` | No | No (unless you'd rather keep it secret too - see below) | `CANARY_USERNAME_PARAMETER`'s Parameter Store value, then `config/credentials.properties`'s `apiEmail` |
+| `CANARY_PASSWORD` | No | **Yes** | Only used if `CANARY_PASSWORD_PARAMETER` is not set |
+| `CANARY_PASSWORD_PARAMETER` | No | No (it's a parameter name, not a secret itself) | If set, the password comes from this Parameter Store parameter instead of `CANARY_PASSWORD` |
+| `CANARY_USERNAME_PARAMETER` | No | No | If set (and `CANARY_USERNAME` isn't), the username comes from this Parameter Store parameter too |
 
-A real CloudWatch deployment should set `CANARY_SECRET_ID` (see below) rather
-than `CANARY_PASSWORD` directly. `credentials.properties` is a **local-dev-only**
-fallback - the deployed Canary artifact deliberately does not include that
-file at all (see "Packaging" below), so in a real deployment this fallback
-path is unreachable unless something is misconfigured, in which case the
-Canary fails cleanly with a message telling you exactly which variable is
-missing (never a stack trace with no explanation).
+A real CloudWatch deployment should set `CANARY_PASSWORD_PARAMETER` (see below)
+rather than `CANARY_PASSWORD` directly. `credentials.properties` is a
+**local-dev-only** fallback - the deployed Canary artifact deliberately does
+not include that file at all (see "Packaging" below), so in a real deployment
+this fallback path is unreachable unless something is misconfigured, in which
+case the Canary fails cleanly with a message telling you exactly which
+variable is missing (never a stack trace with no explanation).
 
-## Secrets Manager
+## Parameter Store
 
-Preferred way to supply credentials in CloudWatch. One secret, JSON-format:
+Preferred way to supply credentials in CloudWatch. Chosen over Secrets
+Manager: this Canary needs one static credential with no rotation, so a plain
+SSM parameter is the simpler, cheaper fit. Unlike Secrets Manager's single
+JSON-blob secret, Parameter Store holds one scalar value per parameter, so
+this uses two separate parameters:
 
-```json
-{
-  "username": "canary@example.com",
-  "password": "<real password - never committed anywhere>"
-}
-```
+| Parameter | Type | Required |
+|---|---|---|
+| Password parameter (name set via `CANARY_PASSWORD_PARAMETER`) | **SecureString** | Yes |
+| Username parameter (name set via `CANARY_USERNAME_PARAMETER`) | String | No - omit it and set `CANARY_USERNAME` as a plain env var instead if the login email isn't considered sensitive |
 
-`username` is optional in the secret - if you'd rather keep the login email
-out of Secrets Manager entirely, omit it and set `CANARY_USERNAME` as a plain
-(non-secret) environment variable instead; `password` is always required
-whenever `CANARY_SECRET_ID` is set. Set `CANARY_SECRET_ID` to the secret's
-name or ARN. Nothing in source code, `config.properties`, `synthetics.json`,
-or the generated ZIP ever contains a real credential - see "Security /
-logging validation" below for how that was verified.
+Set `CANARY_PASSWORD_PARAMETER` to the password parameter's name (e.g.
+`/brandrunner/canary/password`). Nothing in source code, `config.properties`,
+`synthetics.json`, or the generated ZIP ever contains a real credential - see
+"Security / logging validation" below for how that was verified.
 
 ## Logging
 
@@ -162,7 +177,7 @@ canary.zip
 │   ├── end-to-end-testing-1.0-SNAPSHOT-canary.jar   (this project's own classes + a filtered
 │   │                                                  resource set - see "Packaging" below)
 │   └── ...runtime dependency jars actually needed (REST Assured, Jackson, Log4j2,
-│         the AWS Secrets Manager SDK and its own transitives)
+│         the AWS Systems Manager SDK and its own transitives)
 └── synthetics.json
 ```
 
@@ -200,8 +215,8 @@ classpath - see "Local Canary validation" below.
 
 Runs the real `ApiHealthCanary.canaryCode(...)` against a `LocalSyntheticsStub`
 (a minimal stand-in for the managed Synthetics runtime) - no CloudWatch/AWS
-infrastructure required, unless you deliberately set `CANARY_SECRET_ID` to
-test the Secrets Manager path.
+infrastructure required, unless you deliberately set `CANARY_PASSWORD_PARAMETER`
+to test the Parameter Store path.
 
 ```bash
 mvn -q dependency:build-classpath -Dmdep.outputFile=cp.txt -Dmdep.includeScope=test
@@ -218,8 +233,8 @@ specifically so they can never end up in the packaged Canary artifact.
 2. **Select the Java runtime** (`syn-java-1.0`).
 3. **Upload `target/canary.zip`** (built via `mvn clean package -Pcanary`) as the canary code, or reference it from S3.
 4. **Set the handler** to `ai.metayb.canary.ApiHealthCanary::canaryCode`.
-5. **Set environment variables**: `API_BASE_URL`, `API_TENANT`, `CANARY_SECRET_ID` (and `CANARY_USERNAME` if you're keeping the login email non-secret).
-6. **Grant Secrets Manager access**: attach `secretsmanager:GetSecretValue` scoped to the one secret's ARN on the canary's execution role (see IAM below).
+5. **Set environment variables**: `API_BASE_URL`, `API_TENANT`, `CANARY_PASSWORD_PARAMETER` (and `CANARY_USERNAME` if you're keeping the login email non-secret, or `CANARY_USERNAME_PARAMETER` if not).
+6. **Grant Parameter Store access**: attach `ssm:GetParameter` (scoped to the specific parameter ARN(s)) and `kms:Decrypt` (for the SecureString parameter's KMS key) to the canary's execution role (see IAM below).
 7. **Configure the execution role**: either let the console create one (it adds the standard Synthetics permissions automatically), or attach a role with the minimum permissions listed below.
 8. **Configure the S3 artifact location** (a `cw-syn-results-*` bucket, or your own - the execution role needs `s3:PutObject` there).
 9. **Run a test/dry run** and confirm all six steps pass in the step report before scheduling anything recurring.
@@ -252,12 +267,25 @@ Do not use `AdministratorAccess`. Trust policy: `lambda.amazonaws.com` (canaries
     },
     {
       "Effect": "Allow",
-      "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:*:*:secret:<your-canary-secret-name>-*"
+      "Action": "ssm:GetParameter",
+      "Resource": [
+        "arn:aws:ssm:*:*:parameter/<your-canary-password-parameter-name>",
+        "arn:aws:ssm:*:*:parameter/<your-canary-username-parameter-name>"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:*:*:key/<key-id-or-alias-used-to-encrypt-the-SecureString-parameter>"
     }
   ]
 }
 ```
+
+The `kms:Decrypt` statement is required for the SecureString password parameter -
+scope it to whichever KMS key actually encrypts it (a customer-managed key's
+ARN, or the account's default `alias/aws/ssm` key). Only include the second
+`ssm:GetParameter` resource entry if you're also using `CANARY_USERNAME_PARAMETER`.
 
 (`xray:PutTraceSegments` on `*` too, only if X-Ray tracing is enabled for the canary.)
 

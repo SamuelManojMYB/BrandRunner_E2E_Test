@@ -2,7 +2,6 @@ package testUtils;
 
 import ai.metayb.api.utils.SanitizedApiLoggingFilter;
 import ai.metayb.config.ConfigManager;
-import ai.metayb.ui.core.DataReader;
 import ai.metayb.utils.PerformanceRecorder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.qameta.allure.testng.AllureTestNg;
@@ -44,8 +43,11 @@ public class BaseApiTest {
         baseURI = ConfigManager.getApiBaseUrl();
         logger.info("Base URI initialized for environment: {} (tenant: {})", baseURI, ConfigManager.getApiTenant());
 
-        DataReader credentials = new DataReader();
-        Response loginResponse = performLogin(credentials.apiEmail, credentials.apiPassword);
+        // ConfigManager.getApiUsername()/getApiPassword(): API_USERNAME/API_PASSWORD env
+        // vars (set by CodeBuild from SSM Parameter Store) take precedence, falling back
+        // to DataReader's apiEmail/apiPassword (credentials.properties) for local runs -
+        // see ConfigManager for the full precedence chain.
+        Response loginResponse = performLogin(ConfigManager.getApiUsername(), ConfigManager.getApiPassword());
 
         // Per the BrandRunners Web APIs Postman collection's Login test script, the session
         // token is returned as the "accessToken" cookie, not a field in the JSON body.

@@ -1,0 +1,24 @@
+# Never bake real credentials into the automation image - CodeBuild/docker run
+# supplies API_USERNAME/API_PASSWORD as environment variables instead (see
+# ConfigManager.getApiUsername()/getApiPassword() and docs/AWS_CODEBUILD.md).
+src/main/resources/config/credentials.properties
+
+# UI-only credential file (InputReader - real UserEmail/UserPassword), unrelated to
+# the API suite this image runs, but it's compiled/packaged as part of the same
+# shared Maven module - excluded for the same "no real credentials in the image"
+# reason as credentials.properties above.
+src/main/resources/config/input.properties
+
+# Build output / local tooling state - regenerated inside the image, never needed
+# from the host.
+target/
+.idea/
+.git/
+.gitignore
+
+# Local test-run artifacts, not part of the framework itself.
+allure-report/
+.allure/
+logs/
+*.log
+test-data/test-results.xlsx
