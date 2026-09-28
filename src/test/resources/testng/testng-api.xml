@@ -2,9 +2,9 @@
 <!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
 <!-- BrandRunners Web API suite. Source of truth: "BrandRunners Web APIs" Postman collection.
      Covers "00. Auth & Session", "01. Control Settings", "02. ANP", "03. FWM",
-     "05. Master Data", "06. Files, Audit & Misc", and "07. Public, Maintenance &
-     Cron" in full. Do not add other folders here until they go through the same
-     analysis/verification process.
+     "04. Sales", "05. Master Data", "06. Files, Audit & Misc", and "07. Public,
+     Maintenance & Cron" in full. Do not add other folders here until they go
+     through the same analysis/verification process.
      Run independently of testng-ui.xml/testng-mobile.xml, e.g.:
        mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-api.xml -->
 <suite name="BrandRunners API Suite">
@@ -169,6 +169,44 @@
             <class name="ai.metayb.api.fwm.reports.ReportsLocationTrackingApiTest"/>
             <class name="ai.metayb.api.fwm.reports.ReportsPerformanceApiTest"/>
             <class name="ai.metayb.api.fwm.reports.ReportsSalesApiTest"/>
+        </classes>
+    </test>
+
+    <test name="04. Sales - Sales Orders">
+        <classes>
+            <class name="ai.metayb.api.sales.salesorders.SalesOrdersApiTest"/>
+            <class name="ai.metayb.api.sales.salesorders.SalesOrdersWriteOperationsApiTest"/>
+        </classes>
+    </test>
+
+    <test name="04. Sales - Zimbabwe Sales">
+        <classes>
+            <class name="ai.metayb.api.sales.zimbabwesales.ZimbabweSalesApiTest"/>
+            <class name="ai.metayb.api.sales.zimbabwesales.ZimbabweSalesWriteOperationsApiTest"/>
+        </classes>
+    </test>
+
+    <test name="04. Sales - Sales Targets">
+        <classes>
+            <class name="ai.metayb.api.sales.salestargets.SalesTargetsApiTest"/>
+        </classes>
+    </test>
+
+    <test name="04. Sales - Zimbabwe Reports">
+        <classes>
+            <class name="ai.metayb.api.sales.zimbabwereports.ZimbabweReportsApiTest"/>
+        </classes>
+    </test>
+
+    <test name="04. Sales - Zimbabwe Dashboard">
+        <classes>
+            <class name="ai.metayb.api.sales.zimbabwedashboard.ZimbabweDashboardApiTest"/>
+        </classes>
+    </test>
+
+    <test name="04. Sales - Currencies">
+        <classes>
+            <class name="ai.metayb.api.sales.currencies.CurrenciesApiTest"/>
         </classes>
     </test>
 
