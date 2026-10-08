@@ -37,4 +37,14 @@ public interface TargetLocator {
      */
     public String getAlertText();
 
+    /**
+     * Leaves any frame and returns to the top-level document.
+     */
+    public void switchToDefaultContent();
+
+    /**
+     * Moves from the current frame to its parent frame.
+     */
+    public void switchToParentFrame();
+
 }

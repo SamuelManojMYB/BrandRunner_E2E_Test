@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<!-- Brand Runners Onboarding Portal UI suite (https://qas-onboarding.brandrunners.ai/).
+     Run independently of testng-ui.xml / testng-api.xml / testng-mobile.xml:
+       mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-onboarding-ui.xml                  (everything)
+       mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-onboarding-ui.xml -Dgroups=smoke
+       mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-onboarding-ui.xml -Dgroups=regression
+
+     Test classes live under ai.metayb.ui.onboarding.* and extend testUtils.OnboardingBaseTest. They are
+     picked up by package, so adding a class needs no change here. Tag tests with @Test(groups = ...):
+       "smoke"       critical-path checks - also tag them "regression" so -Dgroups=regression is a superset
+       "regression"  everything else
+     Group selection is deliberately left to -Dgroups instead of one <test> block per group: with
+     -Dgroups the per-block filters were overridden and the same tests ran once per block.
+     Currently covered: ai.metayb.ui.onboarding.authentication.LoginTest. -->
+<suite name="BrandRunners Onboarding Portal UI Suite">
+
+    <listeners>
+        <listener class-name="io.qameta.allure.testng.AllureTestNg"/>
+        <listener class-name="testUtils.ConvertBrokenToFailedListener"/>
+    </listeners>
+
+    <test name="Onboarding Portal UI">
+        <packages>
+            <package name="ai.metayb.ui.onboarding.*"/>
+        </packages>
+    </test>
+
+</suite>

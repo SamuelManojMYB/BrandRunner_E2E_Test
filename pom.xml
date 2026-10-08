@@ -17,7 +17,7 @@
         <!-- Default suite for plain `mvn test` - unchanged from before. Override with
              -DsuiteXmlFile=src/test/resources/testng/testng-api.xml (or testng-mobile.xml's
              own -DexecutionTarget=... profile) to run a different suite independently. -->
-        <suiteXmlFile>src/test/resources/testng/testng-ui.xml</suiteXmlFile>
+        <suiteXmlFile>src/test/resources/testng/testng-api.xml</suiteXmlFile>
     </properties>
 
     <dependencies>

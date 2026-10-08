@@ -31,4 +31,7 @@ public class DataReader {
 
     public final String apiEmail = prop.getProperty("apiEmail");
     public final String apiPassword = prop.getProperty("apiPassword");
+
+    public final String onboardingUiUsername = prop.getProperty("onboarding.ui.username");
+    public final String onboardingUiPassword = prop.getProperty("onboarding.ui.password");
 }

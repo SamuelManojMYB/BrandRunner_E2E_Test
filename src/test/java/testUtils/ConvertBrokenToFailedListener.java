@@ -1,6 +1,7 @@
 package testUtils;
 
 import ai.metayb.ui.wrappers.BaseDriver;
+import ai.metayb.ui.wrappers.SensitiveData;
 import io.qameta.allure.Allure;
 import org.openqa.selenium.OutputType;
 import org.openqa.selenium.TakesScreenshot;
@@ -30,6 +31,8 @@ public class ConvertBrokenToFailedListener implements ITestListener {
     private void attachScreenshotAndSource(WebDriver driver) {
         try {
             if (driver == null) return;
+            // A revealed secret would be readable in the picture: switch it back to dots first.
+            SensitiveData.maskRevealedSecrets(driver);
             // Screenshot
             if (driver instanceof TakesScreenshot) {
                 byte[] bytes = ((TakesScreenshot) driver).getScreenshotAs(OutputType.BYTES);
@@ -41,7 +44,9 @@ public class ConvertBrokenToFailedListener implements ITestListener {
             try {
                 String pageSource = driver.getPageSource();
                 if (pageSource != null) {
-                    Allure.addAttachment("Page source", "text/html", pageSource);
+                    // The portal reflects typed text in each input's value attribute, so the raw source of a page
+                    // with a password field would contain the password. Keep the source, mask sensitive values.
+                    Allure.addAttachment("Page source", "text/html", SensitiveData.scrubPageSource(pageSource));
                 }
             } catch (Exception ignore) { }
         } catch (Exception ignore) { }
