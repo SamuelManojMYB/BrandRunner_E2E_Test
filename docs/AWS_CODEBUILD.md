@@ -5,9 +5,11 @@ inside a Docker container, built and executed by AWS CodeBuild, with the image
 stored in Amazon ECR for reuse. This replaces the need to run the suite from a
 developer machine or a CloudWatch Synthetics Canary for CI-style execution.
 
-**Scope of this first implementation: API automation only.** UI (Selenium) and
-Mobile (Appium) automation are untouched, continue to compile as part of the same
-Maven module, and are simply never invoked by this Docker image.
+**Scope: API automation by default, plus the Onboarding Portal UI suite on request.**
+The image's default (`TEST_TARGET=api`) is exactly the original API-only behaviour.
+UI runs (headless Chrome, section 21) are opt-in with `TEST_TARGET=ui` or `all`.
+Mobile (Appium) automation is untouched, continues to compile as part of the same
+Maven module, and is never invoked by this Docker image.
 
 **Status of the CloudWatch Synthetics Canary** (`ai.metayb.canary.*`,
 `ai.metayb.api.client.CanaryApiSessionClient`, `synthetics.json`,
@@ -155,7 +157,11 @@ to create AWS resources automatically. Key settings:
 - **Source**: this repository (whatever source connection type you use -
   CodeConnections/GitHub, CodeCommit, S3, etc.)
 - **Environment image**: a CodeBuild-managed image with Docker support (e.g.
-  "Amazon Linux 2 - Standard" or "aws/codebuild/standard:7.0")
+  "Amazon Linux 2 - Standard" or "aws/codebuild/standard:7.0"). The environment
+  must be **x86_64 / AMD64** (a Linux x86 compute type, not an ARM/Graviton one):
+  the image bundles a pinned Chrome for Testing, which Google publishes for
+  linux64 (x86_64) only, and the Docker build refuses to continue on any other
+  architecture (section 21).
 - **Privileged mode**: **must be enabled** - CodeBuild runs its own Docker
   daemon inside the build environment to build/push/run images; without
   privileged mode, every `docker` command in `buildspec.yml` fails.
@@ -185,6 +191,17 @@ tag to pull and run; defaults to `latest` if unset).
 
 `API_USERNAME`/`API_PASSWORD` are **not** set here - they come from SSM
 Parameter Store via `buildspec.yml`'s `env.parameter-store` block (section 12).
+
+For a project that uses **`buildspec-ui.yml`** (UI or combined runs, section 21), set the same variables as
+`buildspec-test-only.yml` plus these (all plaintext, none secret; full descriptions in section 21):
+
+| Variable | Example value | Purpose |
+|---|---|---|
+| `TEST_TARGET` | `ui` | `api`, `ui` or `all`; this buildspec defaults to `ui` when unset |
+| `UI_GROUPS` | `smoke` | Optional: narrow the UI suite to existing TestNG group(s); empty = whole UI suite |
+| `ONBOARDING_UI_URL` | `https://qas-onboarding.brandrunners.ai/` | Optional: portal to test; empty = the URL in `config.properties` |
+
+`ONBOARDING_UI_USERNAME`/`ONBOARDING_UI_PASSWORD` are likewise **not** set here; they come from SSM (section 12).
 
 ## 9. Immutable image tagging
 
@@ -325,6 +342,13 @@ Notes:
   at the `aws/ssm` key's ARN, or omit it if your account's default SSM
   encryption setup already grants this some other way. Confirm which applies
   once the parameters are actually created.
+- The `SsmAutomationCredentials` statement uses the wildcard
+  `parameter/brandrunner/qa/automation/*`, so it **already covers the UI parameters** used by `buildspec-ui.yml`
+  (`.../automation/onboarding-ui-username` and `.../automation/onboarding-ui-password`); no new SSM statement is
+  needed. The same KMS rule applies to the UI password, which is a SecureString: if it is encrypted with a
+  **customer-managed** KMS key, the CodeBuild service role needs `kms:Decrypt` on that key (the
+  `KmsDecryptSsmSecureString` statement), and the key policy must allow the role. If it uses the default AWS-managed
+  `aws/ssm` key, follow the note above.
 - If your CodeBuild project also uploads `artifacts:` to an S3 bucket (the
   `artifacts:` block in both buildspec files, if you wire that up to an S3
   location rather than leaving it as build-only output), add a scoped
@@ -380,6 +404,44 @@ aws ssm put-parameter \
 
 (Not run automatically by this change - AWS resource creation is left to you,
 per the instruction this document was written under.)
+
+### Parameters for UI and combined runs (`buildspec-ui.yml`)
+
+`buildspec-ui.yml` additionally declares two parameters for the Onboarding Portal account:
+
+```yaml
+env:
+  parameter-store:
+    API_USERNAME: "/brandrunner/qa/automation/username"
+    API_PASSWORD: "/brandrunner/qa/automation/password"
+    ONBOARDING_UI_USERNAME: "/brandrunner/qa/automation/onboarding-ui-username"
+    ONBOARDING_UI_PASSWORD: "/brandrunner/qa/automation/onboarding-ui-password"
+```
+
+CodeBuild **fails the build if any listed parameter does not exist**, so create both UI parameters before the first
+run. This applies even when `TEST_TARGET=ui` (the two `API_*` parameters are listed too). Create them with the
+placeholders below, substituting your own values. The password is read from a hidden prompt so it is never typed on
+a command line or kept in shell history:
+
+```bash
+aws ssm put-parameter \
+  --name "/brandrunner/qa/automation/onboarding-ui-username" \
+  --type "String" \
+  --value "<onboarding-portal-username>" \
+  --region <AWS_REGION>
+
+read -rsp "Onboarding portal password: " ONBOARDING_PW; echo
+aws ssm put-parameter \
+  --name "/brandrunner/qa/automation/onboarding-ui-password" \
+  --type "SecureString" \
+  --value "$ONBOARDING_PW" \
+  --region <AWS_REGION>
+unset ONBOARDING_PW
+```
+
+(Add `--key-id <KMS_KEY_ID>` to encrypt with a customer-managed key instead of the default `aws/ssm` key, and see
+section 11 for the matching `kms:Decrypt` permission. As above, these commands are not run by this change.)
+Use a dedicated QA account for automation; the UI suite only reads, but treat the password as a real secret.
 
 ## 13. Buildspec configuration
 
@@ -445,6 +507,9 @@ masked exactly as they are in local runs (see section "Sanitized logging" below)
 | Reports tab is empty | `docker cp` step didn't find `target/surefire-reports` - check the `post_build` logs for the actual `mvn` output; a very early failure (e.g. compile error) may mean Surefire never ran at all |
 | Build always "succeeds" even when a test fails | Something reintroduced `maven.test.failure.ignore=true` or a `|| true` - grep `pom.xml` and both buildspec files; neither should contain either |
 | Container's `mvn test` fails trying to download a dependency | `dependency:go-offline` in the Dockerfile's `deps` stage doesn't guarantee every plugin/transitive is pre-cached; the container falls back to live Maven Central access at run time. If the CodeBuild project runs inside a VPC with restricted internet egress, ensure a route to Maven Central (or an internal mirror) exists, or the run will fail on a cold cache |
+| Container exits **3** right away with "needs a non-blank ONBOARDING_UI_USERNAME and/or ONBOARDING_UI_PASSWORD" | `TEST_TARGET` is `ui` or `all` and one of the two UI credentials is unset, empty or whitespace-only. Check that the `onboarding-ui-username` / `onboarding-ui-password` SSM parameters exist, are not empty, and that `buildspec-ui.yml` passes them (section 12). No test was started. The message names the variable, never its value |
+| Container exits **4**, log shows `=== <api\|ui> suite FAILED: Maven succeeded but the TestNG report check failed` | Maven returned 0 but the report line above it shows why the check failed: `report not found`/`invalid`/`inconsistent` (Surefire did not produce a usable `testng-results.xml`), `the report contains failures` (a failed test or configuration method that Maven was told to ignore), or `no test was executed` (zero tests, everything skipped, or a `UI_GROUPS`/`-Dgroups` value that matches no test). Fix the cause; do not remove the check |
+| Image build fails downloading Chrome or at `sha256sum -c`, or `apt-get` fails | No outbound access to `storage.googleapis.com` or the Ubuntu mirrors (see the network prerequisites in section 21), or a `CHROME_VERSION` override without its matching `CHROME_SHA256` / `CHROMEDRIVER_SHA256` |
 
 ## 19. Sanitized logging
 
@@ -467,6 +532,167 @@ automatically"). When ready:
   project (`buildspec-test-only.yml`), not the image-build one - that keeps
   scheduled runs fast (pull + run only) while image builds stay tied to source
   changes.
+
+---
+
+## 21. UI automation in the same image (headless Chrome)
+
+The image also contains a pinned **Chrome for Testing** browser and its matching ChromeDriver, so the Onboarding
+Portal UI suite (`src/test/resources/testng/testng-onboarding-ui.xml`) can run in the same container. API-only
+stays the default.
+
+### Choosing what runs: `TEST_TARGET`
+
+| `TEST_TARGET` | Runs | Notes |
+|---|---|---|
+| `api` (default, also when unset) | `testng-api.xml` | Original behaviour. No browser is started. |
+| `ui` | `testng-onboarding-ui.xml` | Needs non-blank `ONBOARDING_UI_USERNAME` and `ONBOARDING_UI_PASSWORD`. |
+| `all` | API, then UI | Both always run, even if the first fails; the container exits non-zero if **either** fails. |
+
+`UI_GROUPS` (optional) narrows the UI run to existing TestNG group(s), e.g. `smoke` or `regression`; empty means the
+whole UI suite. The groups themselves are unchanged. The container's entrypoint is `docker/run-tests.sh`, which runs
+the project's own `mvn clean test -DsuiteXmlFile=...` command.
+
+**Exit codes.** `0`: every selected suite passed. Otherwise the exit code of the **first failing suite in run order**
+(API, then UI): Maven's own exit code when Maven failed, or `4` when Maven succeeded but the report check below
+failed. Before any test runs: `2` = unknown `TEST_TARGET`, `3` = missing UI credentials.
+
+**Credential check.** For `ui` and `all`, an unset, empty or whitespace-only `ONBOARDING_UI_USERNAME` or
+`ONBOARDING_UI_PASSWORD` is treated as missing: the container prints which variable name is missing (never a value)
+and exits 3 before starting Maven.
+
+**Report guard.** After each suite, `docker/CheckReport.java` (a single-file Java program using the JDK's XML
+parser, so nothing extra is installed) reads `target/surefire-reports/testng-results.xml`. A suite fails, with exit 4
+if Maven itself succeeded, when:
+
+- the report is missing, not valid XML, not a TestNG results file, or its counts are inconsistent. TestNG's root
+  attributes satisfy `total = passed + failed + skipped + ignored` (checked against real reports of this project);
+- the report contains **any failure**: `failed` is above 0, or any `test-method` has status FAIL, **including a failed
+  configuration method** (for example a failing `@BeforeClass` login), which TestNG does not include in `failed`. This
+  means a forwarded `-Dmaven.test.failure.ignore=true` cannot produce a green build;
+- `total` is 0 or **no test executed**. Executed means passed + failed: skipped and ignored (group-filtered or
+  `enabled = false`) tests do not count, so a typo in `UI_GROUPS` or a run in which everything was skipped cannot be a
+  green build.
+
+The counts (`total`, `executed`, `passed`, `failed`, `skipped`, `ignored`, failed configuration methods) are printed
+after every suite, so skipped tests are always visible. If Maven itself fails, Maven's exit code is kept. The checker
+is fail-closed: if it cannot run, or its XML security settings (no DOCTYPE, no external DTD or schema access, no
+XInclude, no entity expansion) cannot be applied, the suite fails instead of passing.
+
+**Extra arguments.** Arguments after the image name are appended to every Maven command, as they were when the
+entrypoint was the bare `mvn ... test` command, e.g. `docker run <image> -X`. Arguments come last, so a repeated
+`-D` option overrides the one the entrypoint set. With `TEST_TARGET=all` the same arguments go to **both** suites, so
+use them only for options valid for both; for example `-Dgroups=smoke` would also filter the API suite, which has no
+such group, and the zero-test guard would fail it. Use `UI_GROUPS` to narrow only the UI suite.
+
+### Environment variables (names already used by the framework; none are baked into the image)
+
+- API: `API_BASE_URL`, `API_TENANT`, `API_USERNAME`, `API_PASSWORD` (unchanged).
+- UI: `ONBOARDING_UI_USERNAME`, `ONBOARDING_UI_PASSWORD` (required), `ONBOARDING_UI_URL` (optional; defaults to
+  `onboarding.ui.url` in `config.properties`), `ONBOARDING_UI_HEADLESS` / `UI_HEADLESS` (optional; the framework runs
+  Chrome headless unless told otherwise).
+
+### Examples
+
+```bash
+docker build -t brandrunner-automation:local .
+
+# API only (default, unchanged)
+docker run --rm -e API_BASE_URL=... -e API_TENANT=... -e API_USERNAME=... -e API_PASSWORD=... brandrunner-automation:local
+
+# UI only (read-only suite; narrow with UI_GROUPS if wanted)
+docker run --rm -e TEST_TARGET=ui -e UI_GROUPS=smoke \
+  -e ONBOARDING_UI_USERNAME=... -e ONBOARDING_UI_PASSWORD=... brandrunner-automation:local
+
+# Both
+docker run --rm -e TEST_TARGET=all -e API_BASE_URL=... -e API_TENANT=... -e API_USERNAME=... -e API_PASSWORD=... \
+  -e ONBOARDING_UI_USERNAME=... -e ONBOARDING_UI_PASSWORD=... brandrunner-automation:local
+```
+
+### Browser and driver
+
+- Chrome for Testing `155.0.8059.39` and ChromeDriver `155.0.8059.39` (a matched pair), downloaded from Google's
+  Chrome for Testing storage during the image build and **verified against pinned SHA-256 values**. Upgrade by
+  changing `CHROME_VERSION`, `CHROME_SHA256` and `CHROMEDRIVER_SHA256` together in the `Dockerfile`.
+- **Platform: x86_64 / AMD64 only.** Chrome for Testing is published for linux64 (x86_64) only, so the image build
+  refuses to continue on any other architecture, and the CodeBuild environment must be x86_64 (section 7). On an Apple
+  Silicon (arm64) machine, build and run the image for the target platform explicitly (it runs under emulation, so
+  expect it to be slower):
+
+  ```bash
+  docker build --platform linux/amd64 -t brandrunner-automation:local .
+  docker run --rm --platform linux/amd64 ... brandrunner-automation:local
+  ```
+
+  This restriction and the browser pin are unchanged; they would only be revisited if an ARM environment were actually
+  needed.
+- A missing Chrome shared library fails the image build (a dedicated `ldd` check in the `Dockerfile`).
+- The framework keeps using WebDriverManager (`BaseDriver` is unchanged). Its cache (`WDM_CACHEPATH`) is pre-seeded
+  with the verified driver and `WDM_CHROMEDRIVERVERSION` is pinned, so no driver is downloaded at run time.
+- `BaseDriver` already passes `--headless`, `--no-sandbox`, `--disable-dev-shm-usage` and `--remote-allow-origins=*`;
+  nothing was added. About `--no-sandbox`: Chrome's own sandbox relies on kernel features such as user namespaces and
+  specific system calls, and the default security restrictions of a container runtime (including the nested Docker
+  that CodeBuild runs) commonly block them, so the sandbox cannot start normally. Disabling it makes Chrome work in
+  the container, but it is a **security trade-off**: a compromised renderer would lose that layer of isolation. It is
+  acceptable here because the container is disposable, runs as a non-root user and only visits the portal under test;
+  it is not a reason to point this browser at untrusted sites. Running as non-root is a separate, additional
+  protection, not the reason for the flag. `--disable-dev-shm-usage` is for the small default `/dev/shm` of containers.
+- The container still runs as the non-root `apprunner` user.
+
+### Network prerequisites (outbound)
+
+- **Docker image build** (`docker build`, for example in `buildspec.yml`): the Ubuntu package mirrors that
+  `apt-get` uses (to install Chrome's runtime libraries and `curl`/`unzip`), the Chrome for Testing download host
+  `storage.googleapis.com` (the pinned Chrome and ChromeDriver archives, verified against SHA-256), plus what the build
+  already needed: Maven Central for dependencies and the base-image registry.
+- **Test execution** (`docker run` / `buildspec-ui.yml`): Maven's dependency and plugin repositories as needed (Maven
+  Central, unless an internal mirror is configured; the image does not pre-cache every plugin, see section 18), and the
+  systems under test (the portal URL, the API base URL). ChromeDriver is **not** downloaded at run time: it is seeded
+  in the image.
+- In a VPC with restricted egress, allow these hosts (or provide mirrors) for the stage that needs them. These are
+  documented requirements and have not been verified from inside a CodeBuild VPC.
+
+### CodeBuild
+
+`buildspec.yml` and `buildspec-test-only.yml` **build the image / pull it and then run it with `docker create` and
+`docker start -a`** inside CodeBuild, which is why privileged mode is required (section 7). The image's own
+entrypoint is used, which is now `docker/run-tests.sh`; with `TEST_TARGET` unset those two buildspecs behave exactly as
+before (API only). The image build is larger and slower than before (Chrome and its libraries add roughly 0.7 GB; measured: 260 MB of OS libraries plus 466 MB of browser and driver).
+
+For UI or combined runs use **`buildspec-ui.yml`** on a second CodeBuild project (test-only: it pulls an image built by
+`buildspec.yml`). It adds `TEST_TARGET`, `UI_GROUPS` and the `ONBOARDING_UI_*` variables, copies per-suite reports from
+`/app/test-reports/{api,ui}/` into `test-reports/{api,ui}/`. Its two `ONBOARDING_UI_*` SSM parameters (section 12) must
+exist before the first run, because CodeBuild fails a build when a listed parameter does not exist.
+
+Report declaration: it uses **one** report group with the glob `**/testng-results.xml` under `test-reports/`, instead
+of one group per suite, so the declaration never names a file that may not exist. `TEST_TARGET=ui` produces only
+`ui/testng-results.xml` and matches only that; `TEST_TARGET=all` produces both and matches both (CodeBuild merges
+them into one report), and the raw per-suite folders are also kept as build artifacts. **This report-group behaviour
+has not been verified in AWS CodeBuild** (only the container, locally in Docker, was run). On the first real build,
+check the build's phase details and Reports tab; if CodeBuild treats the report declaration differently than
+expected, switch to one buildspec per target.
+
+If a CodeBuild project instead used this image directly as its build environment, do
+not rely on the Docker `ENTRYPOINT`; call `docker/run-tests.sh` from the buildspec `commands` (CodeBuild overrides
+image entrypoints).
+
+### Reports
+
+A single-suite run keeps the existing location, `/app/target/surefire-reports`. Every run also copies each suite's
+reports to `/app/test-reports/<api|ui>/`, which survives the `mvn clean` of the next suite in an `all` run (in an `all`
+run `/app/target/surefire-reports` itself holds only the last suite, UI).
+
+Before copying, only **that suite's** destination directory is removed and recreated, so a reused directory (for
+example a mounted volume) never keeps stale files from an earlier run, and the other suite's directory is left alone.
+A copy problem prints a `WARNING` on stderr and never changes the suite's result; in `buildspec-ui.yml` a failed
+`docker cp` of the reports likewise prints a `WARNING` and keeps the container's real exit code.
+
+### Safety
+
+The UI suite is read-only: no test clicks Create or Update, changes a setting or status, uploads a file, or adds or
+removes a cron. The Critical E2E tests E2E-002 and E2E-003 (writes) remain skipped by scope decision and do not exist
+in the suite. Credentials are supplied only at run time, `.dockerignore` still excludes `credentials.properties` and
+`input.properties`, and the framework's secret masking is unchanged.
 
 ---
 

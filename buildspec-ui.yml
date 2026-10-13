@@ -1,0 +1,87 @@
+# CodeBuild buildspec for UI and combined (API + UI) runs. Same pattern as buildspec-test-only.yml: pull the
+# already-pushed ECR image (built by buildspec.yml, which now also installs headless Chrome) and run it with
+# `docker create` / `docker start -a`; the image's ENTRYPOINT (docker/run-tests.sh) is used, so no command is
+# needed here. This needs the CodeBuild project's PRIVILEGED MODE (its own Docker daemon), exactly like the
+# other buildspecs. The existing buildspec.yml / buildspec-test-only.yml are unchanged and keep running the API
+# suite only (the image's default TEST_TARGET is api).
+#
+# Required CodeBuild project environment variables (plain, non-secret):
+#   AWS_ACCOUNT_ID, AWS_DEFAULT_REGION, ECR_REPOSITORY
+#   API_BASE_URL, API_TENANT                  (used when TEST_TARGET is "all")
+#   IMAGE_TAG     - which already-pushed tag to run (defaults to "latest" if unset)
+#   TEST_TARGET   - "ui" or "all" (defaults to "ui" if unset; "api" also works)
+# Optional:
+#   ONBOARDING_UI_URL - portal to test (defaults to the URL in config.properties)
+#   UI_GROUPS         - narrow the UI run to TestNG group(s), e.g. "smoke" or "regression" (default: whole UI suite)
+#
+# Required CodeBuild project secrets, injected from SSM Parameter Store. The two ONBOARDING_UI_* parameter
+# names below are PLACEHOLDERS: create SecureString parameters with these names (or edit the paths here to match
+# yours) BEFORE using this buildspec - CodeBuild fails the build if a listed parameter does not exist. They are
+# kept out of the existing buildspecs on purpose, so those keep working without them.
+#   API_USERNAME, API_PASSWORD, ONBOARDING_UI_USERNAME, ONBOARDING_UI_PASSWORD
+#
+# Safety: the UI suite only reads. No test clicks Create or Update, changes a setting, or touches a cron.
+
+version: 0.2
+
+env:
+  parameter-store:
+    API_USERNAME: "/brandrunner/qa/automation/username"
+    API_PASSWORD: "/brandrunner/qa/automation/password"
+    ONBOARDING_UI_USERNAME: "/brandrunner/qa/automation/onboarding-ui-username"
+    ONBOARDING_UI_PASSWORD: "/brandrunner/qa/automation/onboarding-ui-password"
+
+phases:
+  install:
+    runtime-versions:
+      docker: 20
+
+  pre_build:
+    commands:
+      - echo "Authenticating to Amazon ECR..."
+      - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - IMAGE_TAG="${IMAGE_TAG:-latest}"
+      - TEST_TARGET="${TEST_TARGET:-ui}"
+      - echo "Pulling image tag $IMAGE_TAG (TEST_TARGET=$TEST_TARGET)"
+      - docker pull "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  build:
+    commands:
+      - echo "Running the $TEST_TARGET automation suite(s) in a container of the pulled image..."
+      - >
+        CONTAINER_ID=$(docker create
+        -e TEST_TARGET="$TEST_TARGET"
+        -e UI_GROUPS="$UI_GROUPS"
+        -e API_BASE_URL="$API_BASE_URL"
+        -e API_TENANT="$API_TENANT"
+        -e API_USERNAME="$API_USERNAME"
+        -e API_PASSWORD="$API_PASSWORD"
+        -e ONBOARDING_UI_URL="$ONBOARDING_UI_URL"
+        -e ONBOARDING_UI_USERNAME="$ONBOARDING_UI_USERNAME"
+        -e ONBOARDING_UI_PASSWORD="$ONBOARDING_UI_PASSWORD"
+        "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG");
+        docker start -a "$CONTAINER_ID";
+        TEST_EXIT_CODE=$?;
+        mkdir -p test-reports;
+        docker cp "$CONTAINER_ID":/app/test-reports/. test-reports/ || echo "WARNING - could not copy the test reports out of the container; the CodeBuild report and artifacts for this run will be missing (the test result below is unaffected)";
+        docker rm "$CONTAINER_ID" > /dev/null;
+        exit $TEST_EXIT_CODE
+
+# Per-suite TestNG results copied out of the container: test-reports/ui/ and/or test-reports/api/, depending on
+# TEST_TARGET (a suite that did not run has no folder). A SINGLE report group with a glob is used on purpose, so the
+# declaration never names a file that may not exist: TEST_TARGET=ui matches only ui/testng-results.xml, and
+# TEST_TARGET=all matches both (CodeBuild merges them into one report). The raw per-suite folders are also kept as
+# build artifacts below. NOTE: this report-group/glob behaviour is designed from the CodeBuild documentation and has
+# NOT been run in AWS CodeBuild yet; check the first build's Reports tab and the build's phase details (see
+# docs/AWS_CODEBUILD.md section 21) before relying on it.
+reports:
+  brandrunner-automation-suites:
+    files:
+      - "**/testng-results.xml"
+    base-directory: "test-reports"
+    file-format: "TESTNGXML"
+
+artifacts:
+  files:
+    - "test-reports/**/*"
