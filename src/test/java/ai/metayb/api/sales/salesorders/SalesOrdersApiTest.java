@@ -59,11 +59,12 @@ public class SalesOrdersApiTest extends BaseApiTest {
         Assert.assertNotNull(response.jsonPath().getList("data"));
     }
 
-    @Test(groups = {"api", "smoke", "positive"}, description = "Get Allocations By Distributors with a valid allocationDate returns the allocations structure")
+    @Test(groups = {"api", "smoke", "positive"}, description = "Get Allocations By Distributors with a valid allocationDate returns the paginated allocations structure")
     @Story("Get Allocations By Distributors")
-    @Description("Verified live: the real required query param is 'allocationDate' (YYYY-MM-DD), not 'date' as a " +
-            "naive reading of the error message might suggest - confirmed by trying both. HTTP 200, success=true, " +
-            "data is an array (empty in this tenant).")
+    @Description("Verified live (re-verified 2026-10-13): the required query param is 'allocationDate' (YYYY-MM-DD). " +
+            "HTTP 200, success=true, data.data is an array with data.pagination (total/page/limit/totalPages). " +
+            "Backend contract change: on 2026-10-01 'data' was a bare array; by 2026-10-13 it is a paginated object. " +
+            "Both arrays are empty in this tenant.")
     public void getAllocationsByDistributorsWithValidDateReturnsStructure() {
         Response response = given().spec(requestSpecification)
                 .queryParam("allocationDate", "2026-09-28")
@@ -71,17 +72,33 @@ public class SalesOrdersApiTest extends BaseApiTest {
 
         Assert.assertEquals(response.statusCode(), 200);
         Assert.assertTrue(response.jsonPath().getBoolean("success"));
-        Assert.assertNotNull(response.jsonPath().getList("data"));
+        Assert.assertNotNull(response.jsonPath().getList("data.data"));
+        Assert.assertNotNull(response.jsonPath().getInt("data.pagination.total"));
     }
 
     @Test(groups = {"api", "regression", "negative"}, description = "Get Allocations By Distributors without allocationDate is rejected")
     @Story("Get Allocations By Distributors")
-    @Description("Verified live: HTTP 400, message 'Allocation date is required (YYYY-MM-DD)'.")
+    @Description("Verified live (re-verified 2026-10-13): HTTP 400, message 'Invalid input: expected string, " +
+            "received undefined'. Backend contract change: on 2026-10-01 the message was 'Allocation date is " +
+            "required (YYYY-MM-DD)'; it is now the generic schema-validation text.")
     public void getAllocationsByDistributorsWithoutDateFails() {
         Response response = given().spec(requestSpecification).get("/web/sales/allocations-by-distributors");
 
         Assert.assertEquals(response.statusCode(), 400);
-        Assert.assertEquals(response.jsonPath().getString("message"), "Allocation date is required (YYYY-MM-DD)");
+        Assert.assertEquals(response.jsonPath().getString("message"), "Invalid input: expected string, received undefined");
+    }
+
+    @Test(groups = {"api", "regression", "negative"}, description = "Get Allocations By Distributors with a malformed allocationDate is rejected")
+    @Story("Get Allocations By Distributors")
+    @Description("Verified live on 2026-10-13: allocationDate=not-a-date returns HTTP 400, message 'Allocation date " +
+            "must be YYYY-MM-DD'. This format check did not exist on 2026-10-01.")
+    public void getAllocationsByDistributorsWithMalformedDateFails() {
+        Response response = given().spec(requestSpecification)
+                .queryParam("allocationDate", "not-a-date")
+                .get("/web/sales/allocations-by-distributors");
+
+        Assert.assertEquals(response.statusCode(), 400);
+        Assert.assertEquals(response.jsonPath().getString("message"), "Allocation date must be YYYY-MM-DD");
     }
 
     @Test(groups = {"api", "smoke", "positive"}, description = "Get Orders List by Allocation ID returns real pricing/contingency stock data")

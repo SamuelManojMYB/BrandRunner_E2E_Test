@@ -12,12 +12,14 @@
     <test name="00. Auth &amp; Session">
         <classes>
             <class name="ai.metayb.api.auth_session.auth.LoginApiTest"/>
+            <class name="ai.metayb.api.auth_session.auth.LoginValidationApiTest"/>
             <class name="ai.metayb.api.auth_session.auth.RefreshTokenApiTest"/>
             <class name="ai.metayb.api.auth_session.auth.LogoutApiTest"/>
             <class name="ai.metayb.api.auth_session.auth.ForgotPasswordApiTest"/>
             <class name="ai.metayb.api.auth_session.auth.ResetPasswordApiTest"/>
             <class name="ai.metayb.api.auth_session.auth.VerifyResetTokenApiTest"/>
             <class name="ai.metayb.api.auth_session.session.CurrentSessionApiTest"/>
+            <class name="ai.metayb.api.auth_session.session.SessionAfterRefreshApiTest"/>
             <class name="ai.metayb.api.auth_session.profile.MyRolesApiTest"/>
             <class name="ai.metayb.api.auth_session.profile.SwitchableUsersApiTest"/>
             <class name="ai.metayb.api.auth_session.profile.SwitchProfileApiTest"/>
