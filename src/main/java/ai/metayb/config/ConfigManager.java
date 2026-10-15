@@ -151,6 +151,42 @@ public class ConfigManager {
         return new DataReader().onboardingUiPassword;
     }
 
+    // Budget Creation / Budget Alerts UI (Yeppie business unit on the main QA app). Same precedence as the
+    // Onboarding block: BUDGET_UI_* environment variable, then JVM system property (-Dbudget.ui.url=...), then the
+    // properties file, then the existing legacy ui.* value. The username and password have NO file fallback on
+    // purpose (a credentials file must never silently supply the Yeppie account), and the password has no -D form
+    // either, because command-line arguments are visible in process lists and CI logs.
+    public static String getBudgetUiUrl() {
+        return firstNonBlank(() -> System.getenv("BUDGET_UI_URL"),
+                () -> System.getProperty("budget.ui.url"),
+                () -> props.getProperty("budget.ui.url"),
+                ConfigManager::getBaseUrl);
+    }
+
+    public static String getBudgetUiBrowser() {
+        return firstNonBlank(() -> System.getenv("BUDGET_UI_BROWSER"),
+                () -> System.getProperty("budget.ui.browser"),
+                () -> props.getProperty("budget.ui.browser"),
+                ConfigManager::getBrowser);
+    }
+
+    /** @return null when unset everywhere, which keeps BaseDriver's existing per-browser default (Chrome headless). */
+    public static Boolean getBudgetUiHeadless() {
+        String value = firstNonBlank(() -> System.getenv("BUDGET_UI_HEADLESS"),
+                () -> System.getProperty("budget.ui.headless"),
+                () -> props.getProperty("budget.ui.headless"));
+        return value == null ? getUiHeadless() : parseHeadless(value, "BUDGET_UI_HEADLESS");
+    }
+
+    public static String getBudgetUiUsername() {
+        return firstNonBlank(() -> System.getenv("BUDGET_UI_USERNAME"),
+                () -> System.getProperty("budget.ui.username"));
+    }
+
+    public static String getBudgetUiPassword() {
+        return firstNonBlank(() -> System.getenv("BUDGET_UI_PASSWORD"));
+    }
+
     /** @return {width, height}, or null when neither is configured. */
     public static int[] getUiWindowSize() {
         String width = firstNonBlank(() -> System.getenv("UI_WINDOW_WIDTH"),

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<!-- Brand Runners main QA app: Budget Creation and Budget Alerts UI suite (business unit Yeppie).
+     Run independently of the other suites:
+       mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-budget-ui.xml -Dgroups=budget-readonly      (no writes)
+       mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-budget-ui.xml -Dgroups=budget-write         (WRITES one record)
+       mvn clean test -DsuiteXmlFile=src/test/resources/testng/testng-budget-ui.xml -Dgroups=budget               (everything)
+
+     Credentials: BUDGET_UI_USERNAME and BUDGET_UI_PASSWORD (environment). URL: BUDGET_UI_URL, default ui.url in config.properties.
+     Without credentials the authenticated tests are skipped, not failed.
+
+     Groups:
+       budget            every Budget test
+       budget-readonly   tests that save nothing (safe to repeat)
+       budget-write      the E2E-02..E2E-05 workflow: creates ONE uniquely titled budget per run (QA-Claude-Yeppie-E2E-<timestamp>),
+                         submits it, and never deletes anything. Created records are logged and listed in target/budget-created-records.txt.
+       budget-alerts     Budget Alerts (AL-xxx) checks
+       budget-defect     tests that assert the documented expectation for a known defect (D-xx); they FAIL while the defect is present
+       budget-smoke      the shortest navigation check
+       budget-slow       the 25-activity limit test
+       budget-blocked    documented cases that cannot be automated safely or unambiguously; reported as skipped with the reason
+
+     The write workflow is serial (dependsOnMethods inside one class) and must not be run in parallel. -->
+<suite name="BrandRunners Budget UI Suite">
+
+    <listeners>
+        <listener class-name="io.qameta.allure.testng.AllureTestNg"/>
+        <listener class-name="testUtils.ConvertBrokenToFailedListener"/>
+    </listeners>
+
+    <test name="Budget UI">
+        <packages>
+            <package name="ai.metayb.ui.budget.*"/>
+        </packages>
+    </test>
+
+</suite>

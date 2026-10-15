@@ -4,6 +4,10 @@
 #   api  -> src/test/resources/testng/testng-api.xml
 #   ui   -> src/test/resources/testng/testng-onboarding-ui.xml   (optionally narrowed with UI_GROUPS, e.g. "smoke")
 #   all  -> api, then ui; both always run, even if the first fails.
+#   budget -> src/test/resources/testng/testng-budget-ui.xml  (Budget Creation / Budget Alerts on the main QA app). Needs
+#           BUDGET_UI_USERNAME / BUDGET_UI_PASSWORD. Opt-in only: it is NOT part of "all". BUDGET_GROUPS selects the TestNG
+#           groups and defaults to "budget-readonly" (saves nothing). The write workflow, which creates and submits one
+#           uniquely titled budget per run, must be requested explicitly: BUDGET_GROUPS=budget-write (or "budget" for all).
 #
 # Extra arguments given to the container (docker run <image> -Dfoo=bar ...) are appended to every Maven command, as
 # they were when the entrypoint was the bare `mvn ... test` command. With TEST_TARGET=all they go to BOTH suites, so
@@ -21,20 +25,21 @@
 # Setup errors before any test runs: 2 = unknown TEST_TARGET, 3 = missing UI credentials.
 #
 # Credentials are read from the environment by the framework (API_USERNAME/API_PASSWORD,
-# ONBOARDING_UI_USERNAME/ONBOARDING_UI_PASSWORD); this script never prints their values.
+# ONBOARDING_UI_USERNAME/ONBOARDING_UI_PASSWORD, BUDGET_UI_USERNAME/BUDGET_UI_PASSWORD); this script never prints their values.
 set -u
 
 TEST_TARGET="${TEST_TARGET:-api}"
 API_SUITE="src/test/resources/testng/testng-api.xml"
 UI_SUITE="src/test/resources/testng/testng-onboarding-ui.xml"
+BUDGET_SUITE="src/test/resources/testng/testng-budget-ui.xml"
 REPORTS_COPY_DIR="${REPORTS_COPY_DIR:-/app/test-reports}"   # per-suite copies; target/ is wiped by each `mvn clean`
 REPORT_XML="${REPORT_XML:-target/surefire-reports/testng-results.xml}"
 CHECK_REPORT="${CHECK_REPORT:-/usr/local/lib/brandrunner/CheckReport.java}"
 EXTRA_ARGS=("$@")
 
 case "$TEST_TARGET" in
-  api|ui|all) ;;
-  *) echo "Unknown TEST_TARGET '$TEST_TARGET' (expected: api, ui or all)" >&2; exit 2 ;;
+  api|ui|budget|all) ;;
+  *) echo "Unknown TEST_TARGET '$TEST_TARGET' (expected: api, ui, budget or all)" >&2; exit 2 ;;
 esac
 
 # True when the variable is unset, empty or only whitespace.
@@ -43,13 +48,22 @@ is_blank() {
   [ -z "${value//[[:space:]]/}" ]
 }
 
-if [ "$TEST_TARGET" != "api" ]; then
+if [ "$TEST_TARGET" = "ui" ] || [ "$TEST_TARGET" = "all" ]; then
   # Without these the UI tests would fail or skip instead of testing the portal; reject it up front, with no values shown.
   missing=""
   is_blank "${ONBOARDING_UI_USERNAME:-}" && missing="ONBOARDING_UI_USERNAME"
   is_blank "${ONBOARDING_UI_PASSWORD:-}" && missing="${missing:+$missing and }ONBOARDING_UI_PASSWORD"
   if [ -n "$missing" ]; then
     echo "TEST_TARGET=$TEST_TARGET needs a non-blank $missing in the environment." >&2
+    exit 3
+  fi
+fi
+if [ "$TEST_TARGET" = "budget" ]; then
+  missing=""
+  is_blank "${BUDGET_UI_USERNAME:-}" && missing="BUDGET_UI_USERNAME"
+  is_blank "${BUDGET_UI_PASSWORD:-}" && missing="${missing:+$missing and }BUDGET_UI_PASSWORD"
+  if [ -n "$missing" ]; then
+    echo "TEST_TARGET=budget needs a non-blank $missing in the environment." >&2
     exit 3
   fi
 fi
@@ -112,6 +126,11 @@ if [ "$TEST_TARGET" = "api" ] || [ "$TEST_TARGET" = "all" ]; then
 fi
 if [ "$TEST_TARGET" = "ui" ] || [ "$TEST_TARGET" = "all" ]; then
   run_suite ui "$UI_SUITE" "${UI_GROUPS:-}"
+  note_result $?
+fi
+if [ "$TEST_TARGET" = "budget" ]; then
+  # Read-only by default; the write workflow needs BUDGET_GROUPS=budget-write (or budget) to be asked for explicitly.
+  run_suite budget "$BUDGET_SUITE" "${BUDGET_GROUPS:-budget-readonly}"
   note_result $?
 fi
 exit "$final"
